@@ -16,6 +16,8 @@ function openRun(view, ctx, run) {
       ['最小支持度', `${esc(run.min_support_pct)}%（${esc((run.metrics || {}).min_support_count || 0)} 条会话）`],
       ['最大长度', `${esc(run.max_len)} 步`],
       ['模式库上限', `${esc(run.top_k)} 条`],
+      ['口径版本', `<span class="mono">${esc((run.metrics || {}).caliber_version_no || '初始口径')}</span>`],
+      ['排除事件', `<span class="mono">${esc(((run.metrics || {}).excluded_event_codes || []).join(', ') || '无')}</span>`],
       ['会话数', esc(run.sequence_count)],
       ['模式数', `${esc(run.pattern_count)} 条 · top 支持度 ${fmtPct((run.metrics || {}).top_support_pct || 0)}`],
       ['推荐数', `${esc(run.rec_count)} 条 · 覆盖 ${esc(run.covered_users)}/${esc(run.active_users)} 用户（${fmtPct(run.coverage_pct)}）`],
@@ -118,6 +120,7 @@ export const miningPage = {
             columns: [
               { key: 'run_no', label: '运行号', className: 'mono' },
               { key: 'status', label: '状态', render: (row) => `<span class="badge ${statusTone(row.status)}">${esc(ENUMS.mineStatus[row.status] || row.status)}</span>` },
+              { key: 'caliber', label: '口径版本', className: 'mono', render: (row) => esc((row.metrics || {}).caliber_version_no || '初始') },
               { key: 'pattern_count', label: '模式', className: 'num' },
               { key: 'rec_count', label: '推荐', className: 'num' },
               { key: 'coverage_pct', label: '覆盖率', className: 'num', render: (row) => fmtPct(row.coverage_pct) },
@@ -132,12 +135,20 @@ export const miningPage = {
               active
                 ? `<dl class="kv">
                     <dt>运行号</dt><dd class="mono">${esc(active.run_no)}</dd>
+                    <dt>口径版本</dt><dd class="mono">${esc((active.metrics || {}).caliber_version_no || '初始口径')}</dd>
                     <dt>最小支持度</dt><dd>${esc(active.min_support_pct)}% · ${esc((active.metrics || {}).min_support_count || 0)} 条会话</dd>
                     <dt>最大长度</dt><dd>${esc(active.max_len)} 步</dd>
                     <dt>top1 支持度</dt><dd>${fmtPct((active.metrics || {}).top_support_pct || 0)}</dd>
                     <dt>平均序列长</dt><dd>${esc((active.metrics || {}).avg_sequence_len || 0)} 事件</dd>
                     <dt>覆盖率</dt><dd>${fmtPct(active.coverage_pct)}（${esc(active.covered_users)}/${esc(active.active_users)}）</dd>
                   </dl>
+                  <h3 style="font-size:0.95rem;margin:10px 0 4px">口径过滤（停用 / 非关键已排除）</h3>
+                  <div class="track">
+                    ${((active.metrics || {}).excluded_event_codes || []).map((code) => `<span class="chip billing">${esc(code)}</span>`).join(' ') || '<span class="muted mono">无排除事件</span>'}
+                  </div>
+                  <div class="caliber-note" style="margin-top:6px">
+                    入模会话 ${esc(active.sequence_count)} 条；受口径影响会话 ${esc((active.metrics || {}).caliber_affected_sessions ?? 0)} 条
+                  </div>
                   <div class="mono muted" style="margin-top:10px">${esc((active.metrics || {}).top_pattern || '')}</div>
                   ${can(ctx.user.role, 'export:read') ? '<button class="btn sm ghost" id="export-patterns" style="margin-top:10px">导出模式库 CSV</button>' : ''}`
                 : emptyState({ title: '暂无参数', hint: '先发起一次挖掘。' })

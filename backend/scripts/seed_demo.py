@@ -13,6 +13,7 @@ from sqlalchemy import func, select
 
 from src.config.database import session_scope
 from src.models.audit import AuditLog
+from src.models.caliber import CaliberVersion
 from src.models.event_def import EventDef
 from src.models.event_seq import EventSeq
 from src.models.mine_run import MineRun
@@ -20,6 +21,7 @@ from src.models.pattern import Pattern
 from src.models.recommendation import Recommendation
 from src.models.user import User
 from src.services import mining_service
+from src.utils.timeutil import utcnow
 
 from scripts.demo_config import DEMO_PASSWORD, DEMO_USERS, ORG, SEED_AUDIT, SEED_RUN
 from scripts.demo_data import MODULE_OF, dataset
@@ -91,6 +93,41 @@ def ensure_sample_counts(db) -> None:
     db.flush()
 
 
+def ensure_caliber_baseline(db) -> CaliberVersion | None:
+    """初始口径版本：发布/回滚的不可变基线，幂等（只建一条）。"""
+    existing = db.scalar(select(CaliberVersion).order_by(CaliberVersion.id.asc()).limit(1))
+    if existing is not None:
+        return existing
+    events = db.scalars(select(EventDef).order_by(EventDef.id)).all()
+    snapshot = {
+        row.code: {
+            "code": row.code,
+            "module": row.module,
+            "label": row.label,
+            "is_key": bool(row.is_key),
+            "enabled": bool(row.enabled),
+        }
+        for row in events
+    }
+    version = CaliberVersion(
+        version_no="C00000000-000",
+        status="published",
+        change_note="初始事件口径基线（seed）",
+        snapshot=snapshot,
+        event_count=len(snapshot),
+        key_count=sum(1 for item in snapshot.values() if item["is_key"]),
+        enabled_count=sum(1 for item in snapshot.values() if item["enabled"]),
+        changed_codes=[],
+        rehearsal_id=None,
+        rehearsal_summary=None,
+        published_by="system@nextbest.io",
+        published_at=utcnow(),
+    )
+    db.add(version)
+    db.flush()
+    return version
+
+
 def ensure_mining(db) -> MineRun:
     run = db.scalar(select(MineRun).where(MineRun.seed_key == SEED_RUN["seed_key"]))
     if run is not None:
@@ -131,6 +168,7 @@ def seed_all() -> dict:
         events = ensure_events(db, data["events"])
         sequences = ensure_sequences(db, data["sessions"])
         ensure_sample_counts(db)
+        ensure_caliber_baseline(db)
         run = ensure_mining(db)
         ensure_audit(db)
         db.flush()

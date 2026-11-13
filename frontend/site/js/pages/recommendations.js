@@ -73,12 +73,14 @@ export const recommendationsPage = {
       return;
     }
     const activeRun = runs.items.find((item) => String(item.id) === String(state.runId)) || runs.items[0];
+    const caliberNo = (activeRun && (activeRun.metrics || {}).caliber_version_no) || '初始口径';
     view.innerHTML = `
       <section class="panel">
         <div class="panel-head">
           <h2>下一步推荐名单</h2>
           <div style="display:flex;gap:8px;align-items:center">
             <span class="meta">${data.total} 条 · 覆盖率 ${fmtPct(activeRun ? activeRun.coverage_pct : 0)}</span>
+            <span class="badge info" title="该名单按此口径版本生成；待发布草稿不影响当前复核与导出">口径 ${esc(caliberNo)}</span>
             ${can(ctx.user.role, 'export:read') ? '<button class="btn sm ghost" id="export-recs">导出 CSV</button>' : ''}
           </div>
         </div>

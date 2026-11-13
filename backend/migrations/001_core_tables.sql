@@ -58,6 +58,7 @@ CREATE TABLE mine_runs (
     coverage_pct    DOUBLE       NOT NULL DEFAULT 0,
     metrics         JSON,
     log_text        TEXT,
+    caliber_version_id INT,
     seed_key        VARCHAR(120) UNIQUE,
     started_at      DATETIME     NOT NULL,
     finished_at     DATETIME
@@ -101,6 +102,53 @@ CREATE TABLE recommendations (
     CONSTRAINT uq_rec_run_user_pattern_next UNIQUE (run_id, user_id, pattern_id, next_event),
     CONSTRAINT fk_rec_run FOREIGN KEY (run_id) REFERENCES mine_runs(id) ON DELETE CASCADE,
     CONSTRAINT fk_rec_pattern FOREIGN KEY (pattern_id) REFERENCES patterns(id) ON DELETE CASCADE
+);
+
+-- 事件口径版本化：草稿（待发布）/ 预演（影响面快照）/ 版本（发布不可变）
+CREATE TABLE caliber_drafts (
+    id              INT AUTO_INCREMENT PRIMARY KEY,
+    status          VARCHAR(16)  NOT NULL DEFAULT 'active',  -- active/published/discarded
+    base_version_id INT,
+    change_note     VARCHAR(500),
+    changes         JSON,        -- {code: {"is_key": bool, "enabled": bool}}
+    created_by      VARCHAR(160) NOT NULL,
+    created_at      DATETIME     NOT NULL,
+    updated_at      DATETIME     NOT NULL,
+    published_at    DATETIME,
+    INDEX ix_caliber_drafts_status (status)
+);
+
+CREATE TABLE caliber_rehearsals (
+    id               INT AUTO_INCREMENT PRIMARY KEY,
+    draft_id         INT NOT NULL,
+    status           VARCHAR(16) NOT NULL DEFAULT 'ready',  -- ready/stale/consumed
+    changes_snapshot JSON,
+    impact           JSON,
+    created_by       VARCHAR(160) NOT NULL,
+    created_at       DATETIME     NOT NULL,
+    INDEX ix_caliber_rehearsals_draft (draft_id),
+    INDEX ix_caliber_rehearsals_status (status)
+);
+
+CREATE TABLE caliber_versions (
+    id              INT AUTO_INCREMENT PRIMARY KEY,
+    version_no      VARCHAR(40)  NOT NULL UNIQUE,
+    status          VARCHAR(16)  NOT NULL DEFAULT 'published',  -- published/rolled_back
+    change_note     VARCHAR(500),
+    snapshot        JSON,        -- 发布时点全量口径 {code: {is_key, enabled, module, label}}
+    event_count     INT          NOT NULL DEFAULT 0,
+    key_count       INT          NOT NULL DEFAULT 0,
+    enabled_count   INT          NOT NULL DEFAULT 0,
+    changed_codes   JSON,
+    rehearsal_id    INT,
+    rehearsal_summary JSON,
+    published_by    VARCHAR(160) NOT NULL,
+    published_at    DATETIME     NOT NULL,
+    rolled_back_at  DATETIME,
+    rollback_reason VARCHAR(500),
+    created_at      DATETIME     NOT NULL,
+    INDEX ix_caliber_versions_status (status),
+    INDEX ix_caliber_versions_published (published_at)
 );
 
 CREATE TABLE audit_logs (

@@ -1,10 +1,15 @@
-"""导出服务：推荐名单 / 模式库 CSV（UTF-8 BOM，Excel 直开不乱码）。"""
+"""导出服务：推荐名单 / 模式库 CSV（UTF-8 BOM，Excel 直开不乱码）。
+
+导出只读取已落库的正式挖掘结果（按最近一次发布口径生成）；待发布草稿不影响导出。
+每条导出带口径版本号，便于核对「这份名单是哪一版口径算出来的」。
+"""
 from __future__ import annotations
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from src.constants.enums import MODULE_LABELS, REC_PRIORITY_LABELS, REVIEW_STATUS_LABELS
+from src.models.caliber import CaliberVersion
 from src.models.event_def import EventDef
 from src.models.mine_run import MineRun
 from src.models.pattern import Pattern
@@ -16,13 +21,25 @@ def _labels(db: Session) -> dict[str, str]:
     return {row.code: row.label for row in db.scalars(select(EventDef)).all()}
 
 
+def _caliber_no(db: Session, run: MineRun | None) -> str:
+    if run is not None and run.caliber_version_id:
+        version = db.get(CaliberVersion, run.caliber_version_id)
+        if version:
+            return version.version_no
+    latest = db.scalar(select(CaliberVersion).order_by(CaliberVersion.id.desc()).limit(1))
+    return latest.version_no if latest else "初始口径"
+
+
 def recommendations_csv(db: Session, run_id: int | None = None) -> bytes:
     stmt = select(Recommendation)
     if run_id:
         stmt = stmt.where(Recommendation.run_id == run_id)
     rows_db = db.scalars(stmt.order_by(Recommendation.score.desc(), Recommendation.id)).all()
     labels = _labels(db)
+    run_nos = {run.id: run for run in db.scalars(select(MineRun)).all()}
     headers = [
+        "口径版本",
+        "挖掘运行号",
         "用户ID",
         "最近事件后缀",
         "推荐下一步",
@@ -39,6 +56,8 @@ def recommendations_csv(db: Session, run_id: int | None = None) -> bytes:
     ]
     rows = [
         [
+            _caliber_no(db, run_nos.get(item.run_id)),
+            run_nos.get(item.run_id).run_no if run_nos.get(item.run_id) else item.run_id,
             item.user_id,
             " > ".join(item.suffix or []),
             item.next_event,
@@ -64,9 +83,12 @@ def patterns_csv(db: Session, run_id: int | None = None) -> bytes:
         stmt = stmt.where(Pattern.run_id == run_id)
     rows_db = db.scalars(stmt.order_by(Pattern.support_count.desc(), Pattern.id)).all()
     labels = _labels(db)
-    headers = ["排名", "模式", "长度", "支持会话数", "支持度%", "置信度", "提升度", "运行ID"]
+    run_nos = {run.id: run for run in db.scalars(select(MineRun)).all()}
+    headers = ["口径版本", "挖掘运行号", "排名", "模式", "长度", "支持会话数", "支持度%", "置信度", "提升度"]
     rows = [
         [
+            _caliber_no(db, run_nos.get(item.run_id)),
+            run_nos.get(item.run_id).run_no if run_nos.get(item.run_id) else item.run_id,
             item.rank,
             " > ".join(labels.get(code, code) for code in (item.items or [])),
             item.length,
@@ -74,7 +96,6 @@ def patterns_csv(db: Session, run_id: int | None = None) -> bytes:
             f"{item.support_pct:.1f}",
             f"{item.confidence:.4f}",
             f"{item.lift:.4f}",
-            item.run_id,
         ]
         for item in rows_db
     ]
@@ -83,10 +104,12 @@ def patterns_csv(db: Session, run_id: int | None = None) -> bytes:
 
 def runs_csv(db: Session) -> bytes:
     runs = db.scalars(select(MineRun).order_by(MineRun.id)).all()
-    headers = ["运行号", "最小支持度%", "最大长度", "模式数", "推荐数", "覆盖率%", "状态", "操作人", "开始时间", "结束时间"]
+    version_nos = {v.id: v.version_no for v in db.scalars(select(CaliberVersion)).all()}
+    headers = ["运行号", "口径版本", "最小支持度%", "最大长度", "模式数", "推荐数", "覆盖率%", "状态", "操作人", "开始时间", "结束时间"]
     rows = [
         [
             run.run_no,
+            version_nos.get(run.caliber_version_id, "初始口径"),
             f"{run.min_support_pct:.1f}",
             run.max_len,
             run.pattern_count,

@@ -1,6 +1,7 @@
 import { api } from '../api.js';
 import { ENUMS, can } from '../config.js';
 import { drawer, errorBox, errorMessage, esc, field, fmtTime, kv, table, toast } from '../ui.js';
+import { bindBanner, loadCaliberState, openCaliberConsole, pendingBanner } from '../caliber.js';
 
 const state = { q: '', module: '', isKey: '' };
 
@@ -13,17 +14,20 @@ function openEvent(view, ctx, event) {
       ['事件码', `<span class="mono">${esc(event.code)}</span>`],
       ['模块', esc(event.module_label)],
       ['关键事件', event.is_key ? '是（进入推荐候选池）' : '否'],
+      ['启用状态', event.enabled ? '启用' : '停用（不进入挖掘与推荐）'],
       ['采样权重', esc(event.weight)],
       ['出现次数', `${esc(event.sample_count)} 次`],
       ['口径说明', esc(event.description || '—')],
       ['登记时间', fmtTime(event.created_at)],
-    ])}`,
+    ])}
+    ${editable ? '<div class="caliber-note" style="margin-top:10px">关键/停用标记改为「先入草稿、预演后统一发布」，保存后不会立刻改动正式名单。</div>' : ''}`,
     footer: editable
       ? `<form id="event-form" style="display:grid;gap:10px">
-          ${field({ label: '采样权重（1-10）', name: 'weight', type: 'number', value: event.weight })}
-          ${field({ label: '是否关键事件', name: 'is_key', value: String(event.is_key), options: [{ value: 'true', label: '关键事件' }, { value: 'false', label: '普通事件' }] })}
-          ${field({ label: '状态', name: 'enabled', value: String(event.enabled), options: [{ value: 'true', label: '启用' }, { value: 'false', label: '停用' }] })}
-          <button class="btn accent" type="submit">保存口径</button>
+          ${field({ label: '采样权重（1-10，即时生效）', name: 'weight', type: 'number', value: event.weight })}
+          ${field({ label: '是否关键事件（写入待发布草稿）', name: 'is_key', value: String(event.is_key), options: [{ value: 'true', label: '关键事件' }, { value: 'false', label: '普通事件' }] })}
+          ${field({ label: '状态（写入待发布草稿）', name: 'enabled', value: String(event.enabled), options: [{ value: 'true', label: '启用' }, { value: 'false', label: '停用' }] })}
+          <div class="form-error" id="event-error"></div>
+          <button class="btn accent" type="submit">保存</button>
         </form>`
       : '<span class="mono muted">只读角色可查看事件口径，不能修改</span>',
   });
@@ -31,16 +35,25 @@ function openEvent(view, ctx, event) {
     submitEvent.preventDefault();
     const form = submitEvent.target;
     try {
-      await api.patch(`/api/events/${event.id}`, {
-        weight: Number(form.weight.value),
-        is_key: form.is_key.value === 'true',
-        enabled: form.enabled.value === 'true',
-      });
-      toast('事件口径已更新');
+      const payload = { weight: Number(form.weight.value) };
+      const nextIsKey = form.is_key.value === 'true';
+      const nextEnabled = form.enabled.value === 'true';
+      const resp = await api.patch(`/api/events/${event.id}`, payload);
+      // 口径标记只有发生变化才写草稿
+      if (nextIsKey !== event.is_key || nextEnabled !== event.enabled) {
+        await api.post('/api/caliber/draft/stage', {
+          code: event.code,
+          is_key: nextIsKey,
+          enabled: nextEnabled,
+        });
+        toast('权重已更新；关键/停用变更已写入待发布草稿，需预演后发布');
+      } else {
+        toast(resp.caliber_staged ? '变更已写入待发布草稿' : '事件口径已更新');
+      }
       close();
       await eventsPage.render(view, ctx);
     } catch (err) {
-      toast(errorMessage(err), 'err');
+      root.querySelector('#event-error').textContent = errorMessage(err);
     }
   });
 }
@@ -89,20 +102,27 @@ function openCreate(view, ctx) {
 export const eventsPage = {
   async render(view, ctx) {
     let data;
+    let caliber;
     try {
-      data = await api.get('/api/events', { q: state.q, module: state.module, is_key: state.isKey, limit: 50 });
+      [data, caliber] = await Promise.all([
+        api.get('/api/events', { q: state.q, module: state.module, is_key: state.isKey, limit: 50 }),
+        loadCaliberState(),
+      ]);
     } catch (err) {
       view.innerHTML = errorBox(errorMessage(err));
       view.querySelector('#retry-btn')?.addEventListener('click', () => eventsPage.render(view, ctx));
       return;
     }
+    const writable = can(ctx.user.role, 'event:write');
     view.innerHTML = `
+      ${pendingBanner(caliber, ctx.user.role)}
       <section class="panel">
         <div class="panel-head">
           <h2>事件字典</h2>
           <div style="display:flex;gap:8px;align-items:center">
             <span class="meta">${data.total} 个事件</span>
-            ${can(ctx.user.role, 'event:write') ? '<button class="btn sm accent" id="new-event">登记事件</button>' : ''}
+            ${writable ? '<button class="btn sm ghost" id="caliber-console">口径发布台</button>' : ''}
+            ${writable ? '<button class="btn sm accent" id="new-event">登记事件</button>' : ''}
           </div>
         </div>
         <div class="panel-body">
@@ -127,6 +147,9 @@ export const eventsPage = {
           ],
         })}
       </section>`;
+    const refresh = () => eventsPage.render(view, ctx);
+    bindBanner(view, ctx, refresh);
+    view.querySelector('#caliber-console')?.addEventListener('click', () => openCaliberConsole(view, ctx, refresh));
     const filters = view.querySelector('#event-filters');
     filters?.addEventListener('change', () => {
       state.q = filters.querySelector('[name=q]').value.trim();

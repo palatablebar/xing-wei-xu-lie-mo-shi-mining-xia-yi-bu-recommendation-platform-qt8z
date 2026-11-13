@@ -29,6 +29,7 @@ class MineRun(Base):
     coverage_pct: Mapped[float] = mapped_column(Float, default=0.0)
     metrics: Mapped[dict] = mapped_column(JSON, default=dict)
     log_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    caliber_version_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
     seed_key: Mapped[str | None] = mapped_column(String(120), unique=True, nullable=True)
     started_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)

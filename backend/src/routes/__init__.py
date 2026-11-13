@@ -3,6 +3,7 @@ from fastapi import APIRouter
 
 from src.routes.audit import router as audit_router
 from src.routes.auth import router as auth_router
+from src.routes.caliber import router as caliber_router
 from src.routes.events import router as events_router
 from src.routes.exports import router as exports_router
 from src.routes.health import router as health_router
@@ -17,6 +18,7 @@ api_router.include_router(health_router)
 api_router.include_router(auth_router)
 api_router.include_router(overview_router)
 api_router.include_router(events_router)
+api_router.include_router(caliber_router)
 api_router.include_router(sequences_router)
 api_router.include_router(mine_runs_router)
 api_router.include_router(patterns_router)

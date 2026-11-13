@@ -1,6 +1,7 @@
 import { api } from '../api.js';
-import { ENUMS } from '../config.js';
+import { ENUMS, can } from '../config.js';
 import { barList, emptyState, errorBox, errorMessage, esc, fmtPct, fmtTime, ladder, readouts, waterfall } from '../ui.js';
+import { bindBanner, openCaliberConsole, pendingBanner } from '../caliber.js';
 
 export const overviewPage = {
   async render(view, ctx) {
@@ -16,13 +17,45 @@ export const overviewPage = {
       return;
     }
     const run = data.latest_run;
+    const caliber = data.caliber || {};
+    const latestVersion = caliber.latest_version;
     view.innerHTML = `
+      ${pendingBanner(caliber.draft, ctx.user.role)}
       ${readouts([
         { label: '会话总量', value: data.sequences_total, unit: '条', hint: `均值 ${data.avg_events} 事件 / 会话` },
         { label: '推荐覆盖率', value: fmtPct(run ? run.coverage_pct : 0), hint: run ? `${run.covered_users}/${run.active_users} 位活跃用户` : '尚未挖掘', tone: 'hot' },
         { label: '模式库', value: data.patterns_total, unit: '条', hint: run ? `min_sup ${run.min_support_pct}% · 最长 ${run.max_len} 步` : '尚未挖掘' },
         { label: '待复核推荐', value: data.pending_total, unit: '条', hint: data.worker_alive ? 'worker 在岗' : 'worker 心跳超时', tone: 'cool' },
       ])}
+      <section class="panel" style="margin:14px 0">
+        <div class="panel-head">
+          <h2>事件口径版本</h2>
+          <div style="display:flex;gap:8px;align-items:center">
+            <span class="meta">待发布 vs 正式</span>
+            ${can(ctx.user.role, 'event:write') ? '<button class="btn sm ghost" id="overview-caliber">口径发布台</button>' : ''}
+          </div>
+        </div>
+        <div class="panel-body">
+          ${
+            latestVersion
+              ? `<dl class="kv">
+                  <dt>当前版本</dt><dd class="mono">${esc(latestVersion.version_no)}
+                    ${latestVersion.status === 'published' ? '<span class="badge ok">正式生效</span>' : '<span class="badge danger">已回滚</span>'}</dd>
+                  <dt>变更事件</dt><dd>${esc((latestVersion.changed_codes || []).join(', ') || '初始基线')}</dd>
+                  <dt>发布人 / 时间</dt><dd class="mono">${esc(latestVersion.published_by)} · ${fmtTime(latestVersion.published_at)}</dd>
+                  <dt>预演摘要</dt><dd class="mono muted">${esc(JSON.stringify(latestVersion.rehearsal_summary || {}))}</dd>
+                </dl>`
+              : emptyState({ title: '还没有口径版本', hint: '首次 seed 会建立初始基线。' })
+          }
+          ${
+            caliber.draft && caliber.draft.has_draft
+              ? `<div class="legend" style="margin-top:10px">
+                  <span class="hl">有 ${esc(caliber.draft.changes.length)} 项标记变更待发布；未发布前复核与导出仍按当前正式口径。</span>
+                </div>`
+              : '<div class="legend" style="margin-top:10px"><span>没有待发布草稿，正式口径即当前事件字典。</span></div>'
+          }
+        </div>
+      </section>
       <div class="grid-2">
         <section class="panel">
           <div class="panel-head"><h2>信号瀑布</h2><span class="meta">12 buckets · modules</span></div>
@@ -67,6 +100,9 @@ export const overviewPage = {
           </div>
         </section>
       </div>`;
+    const refresh = () => overviewPage.render(view, ctx);
+    bindBanner(view, ctx, refresh);
+    view.querySelector('#overview-caliber')?.addEventListener('click', () => openCaliberConsole(view, ctx, refresh));
   },
 };
 

@@ -13,6 +13,7 @@ from src.models.event_seq import EventSeq  # noqa: E402
 from src.models.mine_run import MineRun  # noqa: E402
 from src.models.pattern import Pattern  # noqa: E402
 from src.models.recommendation import Recommendation  # noqa: E402
+from src.models.caliber import CaliberDraft, CaliberRehearsal, CaliberVersion  # noqa: E402
 
 __all__ = [
     "Base",
@@ -23,4 +24,7 @@ __all__ = [
     "MineRun",
     "Pattern",
     "Recommendation",
+    "CaliberDraft",
+    "CaliberRehearsal",
+    "CaliberVersion",
 ]

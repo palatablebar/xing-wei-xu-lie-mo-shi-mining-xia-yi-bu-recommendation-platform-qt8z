@@ -14,6 +14,7 @@ from src.models.event_seq import EventSeq
 from src.models.mine_run import MineRun
 from src.models.pattern import Pattern
 from src.models.recommendation import Recommendation
+from src.services import caliber_service
 from src.utils.timeutil import iso_utc, local_now, utcnow
 
 MODULE_TONE = {
@@ -91,6 +92,23 @@ def waterfall(db: Session, buckets: int = 12) -> list[dict]:
     return rows
 
 
+def _latest_caliber_version(db: Session) -> dict | None:
+    from src.models.caliber import CaliberVersion
+
+    version = db.scalar(select(CaliberVersion).order_by(CaliberVersion.id.desc()).limit(1))
+    if version is None:
+        return None
+    return {
+        "id": version.id,
+        "version_no": version.version_no,
+        "status": version.status,
+        "changed_codes": version.changed_codes or [],
+        "published_by": version.published_by,
+        "published_at": iso_utc(version.published_at),
+        "rehearsal_summary": version.rehearsal_summary,
+    }
+
+
 def overview(db: Session) -> dict:
     sessions = db.scalar(select(func.count()).select_from(EventSeq)) or 0
     converted = db.scalar(select(func.count()).select_from(EventSeq).where(EventSeq.converted.is_(True))) or 0
@@ -151,6 +169,10 @@ def overview(db: Session) -> dict:
             for module, count in sorted(module_counts.items(), key=lambda item: -item[1])
         ],
         "waterfall": waterfall(db),
+        "caliber": {
+            "draft": caliber_service.pending_vs_live_diff(db),
+            "latest_version": _latest_caliber_version(db),
+        },
         "signal": {
             "bucket_count": 12,
             "peak_sessions": max((row["sessions"] for row in waterfall(db)), default=0),

@@ -8,19 +8,52 @@ from __future__ import annotations
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from src.constants.enums import MODULE_LABELS, REVIEW_STATUS_LABELS
+from src.constants.enums import REVIEW_STATUS_LABELS
+from src.models.caliber import CaliberVersion
 from src.models.event_def import EventDef
 from src.models.event_seq import EventSeq
 from src.models.mine_run import MineRun
 from src.models.pattern import Pattern
 from src.models.recommendation import Recommendation
-from src.services import recommender, sequence_service
+from src.services import recommender
 from src.services.prefixspan import MinedPattern, mine_patterns, min_support_count
 from src.utils.errors import AppError
 from src.utils.timeutil import iso_utc, local_now, utcnow
 
 PATTERN_MIN_LEN = 2
 DEFAULT_TOP_K = 50
+
+
+def eligible_event_codes(events: list[EventDef]) -> set[str]:
+    """正式口径下进入挖掘/推荐的事件：启用且关键。停用或非关键动作排除。"""
+    return {row.code for row in events if row.enabled and row.is_key}
+
+
+def apply_caliber(sequences: list[list[str]], eligible: set[str]) -> tuple[list[list[str]], int]:
+    """按口径过滤会话事件，返回 (过滤后序列, 受影响会话数)。"""
+    filtered: list[list[str]] = []
+    affected = 0
+    for seq in sequences:
+        kept = [code for code in seq if code in eligible]
+        if kept != seq:
+            affected += 1
+        if kept:
+            filtered.append(kept)
+    return filtered, affected
+
+
+def latest_suffixes_caliber(db: Session, eligible: set[str], k: int = 3) -> dict[str, list[str]]:
+    """每位活跃用户最近一条会话的最后 k 个事件，事件先按正式口径过滤。"""
+    rows = db.scalars(select(EventSeq).order_by(EventSeq.started_at.desc(), EventSeq.id.desc())).all()
+    out: dict[str, list[str]] = {}
+    for row in rows:
+        if row.user_id in out:
+            continue
+        kept = [code for code in (row.events or []) if code in eligible]
+        if not kept:
+            continue
+        out[row.user_id] = kept[-k:]
+    return out
 
 
 def serialize_run(run: MineRun) -> dict:
@@ -41,6 +74,7 @@ def serialize_run(run: MineRun) -> dict:
         "coverage_pct": run.coverage_pct,
         "metrics": run.metrics or {},
         "log_text": run.log_text,
+        "caliber_version_id": run.caliber_version_id,
         "started_at": iso_utc(run.started_at),
         "finished_at": iso_utc(run.finished_at),
     }
@@ -132,12 +166,23 @@ def execute_run(db: Session, run: MineRun) -> MineRun:
     run.started_at = utcnow()
     try:
         rows = db.scalars(select(EventSeq).order_by(EventSeq.started_at, EventSeq.id)).all()
-        sequences = [list(row.events or []) for row in rows]
+        raw_sequences = [list(row.events or []) for row in rows]
+
+        # 正式口径：停用或非关键事件不进入挖掘与推荐（口径未发布前 event_defs 仍是旧版）
+        event_rows = db.scalars(select(EventDef)).all()
+        eligible = eligible_event_codes(list(event_rows))
+        excluded = sorted({row.code for row in event_rows if row.code not in eligible})
+        sequences, affected_sessions = apply_caliber(raw_sequences, eligible)
+        caliber_version = db.scalar(
+            select(CaliberVersion).where(CaliberVersion.status == "published").order_by(CaliberVersion.id.desc()).limit(1)
+        )
+        run.caliber_version_id = caliber_version.id if caliber_version else None
+
         mined = mine_patterns(sequences, run.min_support_pct, run.max_len, run.top_k, min_len=PATTERN_MIN_LEN)
         stored = _persist_patterns(db, run, mined, len(sequences))
 
-        module_of = {row.code: row.module for row in db.scalars(select(EventDef)).all()}
-        suffixes = sequence_service.latest_suffixes(db)
+        module_of = {row.code: row.module for row in event_rows}
+        suffixes = latest_suffixes_caliber(db, eligible)
         refs = [
             recommender.PatternRef(pattern_id=row.id, items=tuple(row.items), confidence=row.confidence, lift=row.lift)
             for row in stored.values()
@@ -160,17 +205,26 @@ def execute_run(db: Session, run: MineRun) -> MineRun:
             "top_pattern": mined[0].seq_key if mined else None,
             "avg_sequence_len": round(sum(len(s) for s in sequences) / len(sequences), 2) if sequences else 0.0,
             "modules_total": len({module for module in module_of.values()}),
+            "caliber_version_id": run.caliber_version_id,
+            "caliber_version_no": caliber_version.version_no if caliber_version else None,
+            "eligible_event_codes": sorted(eligible),
+            "excluded_event_codes": excluded,
+            "raw_sequence_count": len(raw_sequences),
+            "caliber_affected_sessions": affected_sessions,
             "convert_base_pct": round(
                 (db.scalar(select(func.count()).select_from(EventSeq).where(EventSeq.converted.is_(True))) or 0)
-                / len(sequences) * 100,
+                / len(raw_sequences) * 100,
                 1,
             )
-            if sequences
+            if raw_sequences
             else 0.0,
         }
         run.status = "success" if mined else "partial"
         run.log_text = (
-            f"读取 {len(sequences)} 条会话（平均 {run.metrics['avg_sequence_len']} 事件）；"
+            f"读取 {len(raw_sequences)} 条会话；按口径版本 {run.metrics['caliber_version_no'] or '初始口径'} "
+            f"排除停用/非关键事件 {len(excluded)} 个（{', '.join(excluded) or '无'}），"
+            f"受影响会话 {affected_sessions} 条，入模会话 {len(sequences)} 条"
+            f"（平均 {run.metrics['avg_sequence_len']} 事件）；"
             f"最小支持度 {run.min_support_pct}% => {run.metrics['min_support_count']} 条会话；"
             f"命中频繁序列 {len(mined)} 条，模式库保留 {len(stored)} 条（top_k={run.top_k}，长度≥{PATTERN_MIN_LEN}）；"
             f"生成推荐 {rec_count} 条，覆盖 {result.covered_users}/{result.active_users} 位活跃用户"
