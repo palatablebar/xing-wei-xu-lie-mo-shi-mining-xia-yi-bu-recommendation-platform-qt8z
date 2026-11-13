@@ -1,0 +1,47 @@
+/* 设计令牌：时序信号台（深墨绿底 + 荧光橙读数 + 网格坐标 + 等宽）。
+   规则：oklch() 色板；不用纯黑纯白；双字体（display + 等宽）；模块化字号。 */
+:root {
+  --void: oklch(0.185 0.026 167);
+  --void-2: oklch(0.215 0.028 167);
+  --panel: oklch(0.232 0.029 167);
+  --panel-2: oklch(0.268 0.03 167);
+  --panel-3: oklch(0.31 0.03 167);
+
+  --grid: oklch(0.34 0.028 167);
+  --grid-soft: oklch(0.28 0.026 167);
+
+  --ink: oklch(0.93 0.018 152);
+  --ink-soft: oklch(0.775 0.02 158);
+  --ink-faint: oklch(0.6 0.022 162);
+
+  --accent: oklch(0.755 0.185 55);
+  --accent-soft: oklch(0.68 0.155 55);
+  --accent-wash: oklch(0.33 0.075 55);
+
+  --ok: oklch(0.83 0.165 156);
+  --ok-wash: oklch(0.31 0.06 156);
+  --warn: oklch(0.84 0.145 92);
+  --warn-wash: oklch(0.32 0.055 92);
+  --danger: oklch(0.69 0.19 26);
+  --danger-wash: oklch(0.3 0.07 26);
+  --info: oklch(0.76 0.09 220);
+  --info-wash: oklch(0.3 0.045 220);
+  --violet: oklch(0.74 0.11 300);
+
+  --font-display: 'Space Grotesk', 'PingFang SC', system-ui, sans-serif;
+  --font-body: 'IBM Plex Mono', 'SFMono-Regular', ui-monospace, monospace;
+  --font-mono: 'IBM Plex Mono', ui-monospace, monospace;
+
+  --fs-xs: 0.68rem;
+  --fs-sm: 0.79rem;
+  --fs-md: 0.88rem;
+  --fs-lg: 1.05rem;
+  --fs-xl: clamp(1.4rem, 2vw, 2rem);
+  --fs-2xl: clamp(1.9rem, 3.2vw, 3rem);
+
+  --pad: clamp(14px, 1.5vw, 26px);
+  --radius: 2px;
+  --shadow: 0 22px 48px -40px oklch(0.1 0.02 167 / 0.9);
+  --ease: cubic-bezier(0.2, 0.9, 0.25, 1);
+  --tick: oklch(0.42 0.03 167);
+}
